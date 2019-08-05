@@ -13,6 +13,44 @@ if windll is not None:
     winterm = WinTerm()
 
 
+def is_msys_cygwin_tty(stream):
+    # https://github.com/msys2/MINGW-packages/pull/2675/files
+    try:
+        import msvcrt
+        import ctypes
+        import sys
+        import re
+
+        if not hasattr(stream, "fileno"):
+            return False
+
+        if not hasattr(ctypes, "windll") or not hasattr(ctypes.windll.kernel32, "GetFileInformationByHandleEx"):
+            return False
+
+        fileno = stream.fileno()
+        handle = msvcrt.get_osfhandle(fileno)
+        FileNameInfo = 2
+
+        class FILE_NAME_INFO(ctypes.Structure):
+            _fields_ = [('FileNameLength', ctypes.c_ulong),
+                        ('FileName', ctypes.c_wchar * 40)]
+
+        info = FILE_NAME_INFO()
+        ret = ctypes.windll.kernel32.GetFileInformationByHandleEx(handle,
+                                                                  FileNameInfo,
+                                                                  ctypes.byref(info),
+                                                                  ctypes.sizeof(info))
+        if ret == 0:
+            return False
+
+        msys_pattern = r"\\msys-[0-9a-f]{16}-pty\d-(to|from)-master"
+        cygwin_pattern = r"\\cygwin-[0-9a-f]{16}-pty\d-(to|from)-master"
+        return re.match(msys_pattern, info.FileName) is not None or \
+            re.match(cygwin_pattern, info.FileName) is not None
+
+    except ImportError:
+        return False
+
 class StreamWrapper(object):
     '''
     Wraps a stream (such as stdout), acting as a transparent proxy for all
@@ -50,7 +88,7 @@ class StreamWrapper(object):
         except AttributeError:
             return False
         else:
-            return stream_isatty()
+            return stream_isatty() or is_msys_cygwin_tty(stream)
 
     @property
     def closed(self):
